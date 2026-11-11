@@ -1,7 +1,10 @@
 """SQLite storage. Each job is stored once per (ats, slug, job_id), scored at most once, and notified at most once."""
+import json
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 
 from .categories import groups
 from .fetchers import Job
@@ -93,9 +96,11 @@ WHERE_JOB = "WHERE ats = ? AND slug = ? AND job_id = ?"
 
 
 @contextmanager
-def single_run(lock_path: str):
+def single_run(lock_path: str, about: dict | None = None):
     """An exclusive lock for a run or a discovery, so a scheduled run and one started from the web app never overlap.
-    Yields False when another process holds it. The operating system drops the lock if the process dies."""
+    Yields False when another process holds it. The operating system drops the lock if the process dies. With `about`
+    (what the holder is, where it logs), the holder also writes that to `<lock>.json`, so a web app that didn't start
+    it (the scheduled task's run, or one a closed web app started) can show its log; see `run_holder`."""
     handle = open(lock_path, "a+")
     locked = False
     try:
@@ -108,6 +113,12 @@ def single_run(lock_path: str):
             locked = True
         except OSError:
             pass
+        if locked and about is not None:  # a separate file: Windows locks block reading the lock file's first byte
+            info = {**about, "pid": os.getpid(), "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            try:
+                Path(f"{lock_path}.json").write_text(json.dumps(info), encoding="utf-8", newline="\n")
+            except OSError:
+                pass  # only the web app's view of this run depends on it
         yield locked
     finally:
         if locked and os.name == "nt":
@@ -120,6 +131,18 @@ def run_in_progress(db_path: str) -> bool:
     """Whether a run, discovery, or re-score holds the run lock, in any process: the scheduled task, or a terminal."""
     with single_run(f"{db_path}.lock") as free:
         return not free
+
+
+def run_holder(db_path: str) -> dict:
+    """What holds the run lock, as it wrote when it took the lock ({command, log, pid, started_at}); {} when nothing
+    holds it or it said nothing. The file of a run that has ended is left behind but never read: the lock is free."""
+    if not run_in_progress(db_path):
+        return {}
+    try:
+        info = json.loads(Path(f"{db_path}.lock.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return info if isinstance(info, dict) else {}
 
 
 def connect(path: str, *, any_thread: bool = False) -> sqlite3.Connection:
