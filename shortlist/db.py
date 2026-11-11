@@ -288,7 +288,8 @@ def mark_notified(conn: sqlite3.Connection, rows: list[sqlite3.Row], now: str) -
 # A posting is closed when its board was read without it. Sources that list every open job do so on each read; Workday
 # boards are read to the end at least weekly (FULL_SCAN_EVERY), so a job unseen for longer than that is gone. Amazon
 # searches (newest 500) and HTML boards (limited pages) can drop an open job, so they never count as closed.
-COMPLETE_LISTS = ("greenhouse", "lever", "ashby", "workable", "simplify")
+# Rippling and BambooHR answer with the whole board at once (no paging; BambooHR's totalCount equals the jobs returned).
+COMPLETE_LISTS = ("greenhouse", "lever", "ashby", "workable", "simplify", "rippling", "bamboohr")
 BOARD_SEEN = "boards"
 CLOSED = (f"(j.last_seen < b.board_seen AND (j.ats IN {COMPLETE_LISTS} OR j.ats = 'workday'"
           " AND julianday(b.board_seen) - julianday(j.last_seen) > 8))")
